@@ -989,7 +989,7 @@ ES_Event RunTopHSM(ES_Event ThisEvent) {
 
 **Rules for this machine**
 - Every decision is a `TAPE_CHANGED` pattern. Timers are only for the kick, the pre-swing delay, the swing and the steering ramp. No search timeout: place the robot where a straight run meets tape.
-- Mask bits: `FL0 FC1 FR2 CR3 BL4 BC5 BR6`. **CR** is the sensor in bit 3 (the middle sensor, `MC` in §2.3). [CHECK: the design notes say CR reaches a crossing line about 1.4" before FL/FR; confirm the real sensor positions.]
+- Mask bits: `FL0 FC1 FR2 CR3 BL4 BC5 BR6`. **CR** is the dedicated cross sensor, mounted ahead of the front row at about (3.7, 3.8)" so it reaches any crossing line ~1.4" before FL/FR. There is **no middle sensor**: the 7 sensors are FL, FC, FR, CR, BL, BC, BR, and `MC` in the older sections of this document no longer exists. [CHECK: exact CR position and which side of FC it sits on.]
 - Direction is fixed: swings are right turns, so the robot always ends clockwise. The top level then runs Reorient (§8.4) to face counterclockwise.
 
 **The three sensor facts**
@@ -1576,7 +1576,7 @@ IDs are for test tracking (§12).
 12. **Pin map (§3.7):** confirm the proposed pins when wiring, and whether JP7 stays closed for the debug LEDs.
 13. **Shooter current:** if the solenoid draws more than 2.4 A, the DS3658 can't drive it, so use a MOSFET.
 14. **Tower mark:** the tape is on the floor under the black hole (v6). Measure how far it reaches from the tower toward the perimeter, so the downward sensor at the robot's right edge sits over it.
-15. **CR sensor position (v15):** confirm CR is the bit-3 middle sensor and where it sits relative to the front row (§9.1). The v15 timings (`SWING_MS` etc.) need on-field calibration.
+15. **Sensor set (v15):** there is no `MC`; bit 3 is `CR`, the forward cross sensor. The other 38 `MC` references (§2.3, §2.4, §3.1, §3.7, §4.1, §6, §7.2–7.4, §9.2–9.6, §10) still assume a middle sensor on the wheel axis and need rewriting for the Follow, Attack, Tower and Bumped machines. Confirm CR's position (§9.1). The v15 timings (`SWING_MS` etc.) need on-field calibration.
 16. **Navigation fixes found in the sim** (corner creep = timed 5.5", FC must turn on during pivots, keep steering in the sensor gap, ride the inner tape edge, cross check, …): fold them into §9.1/§9.2 once the team agrees.
 
 ---
