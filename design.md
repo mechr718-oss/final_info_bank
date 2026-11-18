@@ -30,6 +30,7 @@ This is a design document with rough pseudocode, not final code. Names follow th
    - 9.5 Shoot
    - 9.6 Turn-around (Bumped v4)
    - 9.7 Sub-HSM pseudocode pattern
+   - 9.8 Perimeter run (find it, then follow it forever)
 10. Edge cases (master list)
 11. Tunable constants
 12. Test and calibration plan
@@ -100,7 +101,7 @@ Startup
               BACK (back bumper)
 ```
 - **CR (cross sensor, v15):** a seventh sensor mounted ahead of the front row. It sees any crossing line before FL/FR do and is used only by Find perimeter (§9.1). Its exact position doesn't matter to the logic.
-- **Centered = FC and BC both on.** There is no middle sensor, so "lined up on a line" means the front and back center sensors are on it together.
+- **Aligned = FC and BC on, and nothing else** (FL, FR, CR, BL, BR all off; mask `0x22`). There is no middle sensor, so this is how the robot knows it is straight on the tape.
 - **v6 geometry:** neighbours are **1.5" apart** (narrower than the 2" tape), and the middle sensor of each row is **0.5" further out** (FC ahead, BC behind).
   - **Why:** with the old 2.5" spacing there were 0.5" blind gaps between sensors where the line lit nothing. Normal drift then read as "line lost" or "end of a cross arm", so the robot never lined up cleanly.
   - With 1.5", the sensors overlap: some sensor always sees a 2" line.
@@ -127,7 +128,7 @@ Startup
 | CR on, then `!FC` (while following, Check) | Perimeter corner | Find perimeter |
 | All front off (while following) | Lost the line, or end of a cross arm | Follow, Find perimeter |
 | 2+ front sensors on (while driving across) | A line crossing our path (an edge) | Find perimeter |
-| FC + BC on | Centered on a line (two points); the line continues behind = a long line, the perimeter | All aligns, Attack, Shoot |
+| FC + BC on, nothing else (`0x22`) | **Aligned** on the tape (two points); the line continues behind = a long line, the perimeter | All aligns, Attack, Shoot |
 | FC on, BC off | The line ends behind the robot: a cross arm tip (or just after a corner turn) | Follow, Find perimeter |
 | BC + field-side back sensor, or back row all off (while reversing on tape) | Back row reached a corner / end of the edge | Bumped BackOff |
 
@@ -606,7 +607,7 @@ Treat the templates as scaffolding: copy one, confirm its harness works, *then* 
 
   | To simulate | Type |
   |---|---|
-  | Centered on the perimeter (FC + BC) | `10->22;` |
+  | Aligned on the perimeter (FC + BC only) | `10->22;` |
   | Corner ahead (FC + FR + BC) | `10->26;` |
   | Tower stub, front row (FL + FC + BC) | `10->23;` |
   | Tower stub, back row (FC + BL + BC) | `10->32;` |
@@ -740,7 +741,8 @@ uint8_t IsTowerStubFront(m) { return ON(m,FC_BIT) && ON(m,F_OUT)  && !ON(m,F_FIE
 uint8_t IsTowerStubBack(m)  { return ON(m,BC_BIT) && ON(m,B_OUT)  && !ON(m,B_FIELD); }
 uint8_t IsCrossFront(m)     { return ON(m,FL_BIT) && ON(m,FC_BIT); }   // only meaningful in Find perimeter's Check (§9.1)
 uint8_t FrontAllOff(m)      { return FrontCount(m) == 0; }
-uint8_t IsAligned(m)        { return ON(m,FC_BIT) && ON(m,BC_BIT); }   // centered (no middle sensor)
+#define ALIGNED_MASK 0x22                                              // FC + BC, nothing else
+uint8_t IsAligned(m)        { return (m) == ALIGNED_MASK; }
 uint8_t BackReachedCorner(m){ return (ON(m,BC_BIT) && ON(m,B_FIELD)) ||
                                      (!ON(m,BL_BIT) && !ON(m,BC_BIT) && !ON(m,BR_BIT)); }
 ```
@@ -759,7 +761,7 @@ Used by Follow perimeter corners. With no middle sensor, nothing marks the corne
 - (Find perimeter v15 doesn't use this: it backs up on CR instead, §9.1 CornerBackup.)
 
 ### 7.4 Align on a line (FC + BC)
-- Pivot (direction set by the caller) until **FC and BC are both on**: the robot is centered and straight along a long line (§2.3).
+- Pivot (direction set by the caller) until the robot is **aligned** (FC and BC on, nothing else, §2.3): straight on a long line.
 - Accuracy is about ±10° (2" tape). Where it matters, follow with sweep-and-center (§7.5) or a few inches of line following, which straightens the robot.
 - **Exception:** right after a real corner turn, BC is off on the perimeter too (the new edge doesn't run behind the corner). After a corner, end the pivot on FC alone. Every place this design uses FC + BC is at least ~14" from a corner.
 - Safety limit `ALIGN_MAX_DEG` (120°). If it never lines up, the caller decides (usually `LINE_LOST`).
@@ -986,7 +988,7 @@ ES_Event RunTopHSM(ES_Event ThisEvent) {
 
 **Rules for this machine**
 - Every decision is a `TAPE_CHANGED` pattern. Timers are only for the kick, the pre-swing delay, the swing and the steering ramp. No search timeout: place the robot where a straight run meets tape.
-- Mask bits: `FL0 FC1 FR2 CR3 BL4 BC5 BR6`. **CR** is the dedicated cross sensor, mounted ahead of the front row at about (3.7, 3.8)" so it reaches any crossing line ~1.4" before FL/FR. There is **no middle sensor**: the 7 sensors are FL, FC, FR, CR, BL, BC, BR. CR's exact position doesn't matter; "centered" means FC and BC are both on.
+- Mask bits: `FL0 FC1 FR2 CR3 BL4 BC5 BR6`. **CR** is the dedicated cross sensor, mounted ahead of the front row at about (3.7, 3.8)" so it reaches any crossing line ~1.4" before FL/FR. There is **no middle sensor**: the 7 sensors are FL, FC, FR, CR, BL, BC, BR. CR's exact position doesn't matter; "aligned" means FC and BC on and nothing else.
 - Direction is fixed: swings are right turns, so the robot always ends clockwise. The top level then runs Reorient (§8.4) to face counterclockwise.
 
 **The three sensor facts**
@@ -1039,7 +1041,7 @@ All states: `BEACON_*`, `REAR_*`, `TOWER_TAPE_FOUND` → ignore. Exit of every s
 - CornerBackup exists because deciding took the robot past the swing point. Backing up until CR comes off the line puts it where a normal corner starts.
 - Seek from an arm tip meets a perimeter edge head-on, so the swing lands it on the edge heading clockwise.
 
-**Hand-off after `PERIMETER_FOUND`:** braked, centered on the perimeter tape, clockwise. `backBlind = TRUE` (ignore the back row until BC sees tape). The motors need a kick (80 for 150 ms) before the straight-line ramp. Nothing about the cross carries over.
+**Hand-off after `PERIMETER_FOUND`:** braked on the perimeter tape, clockwise (not yet aligned: the swing stops with FC on). `backBlind = TRUE` (ignore the back row until BC sees tape). The motors need a kick (80 for 150 ms) before the straight-line ramp. Nothing about the cross carries over.
 
 **Expected logs**
 | Start | S-line sequence |
@@ -1219,7 +1221,7 @@ All states: everything else → ignore. Every exit calls `Shooter_Off()`.
 | | `REAR_BUMPED`, or back row reaches a corner | TurnAround (early) | Never reverse into something, or around a corner |
 | | `TAPE_CHANGED` | stay: steer with the back row (`Robot_ReverseFollowStep`) | Keeps it straight on the tape |
 | | `FRONT_BUMPED` | stay (ignore) | Moving away from it already |
-| TurnAround ("Pivot toward the field ~180°") | FC + BC on, after at least `TURN_MIN_DEG` (100°) of turning | Flip direction, `FieldPos_TurnedAround()`, **return `TURNED_AROUND`** | Now on the same edge, facing the other way |
+| TurnAround ("Pivot toward the field ~180°") | aligned (FC + BC only), after at least `TURN_MIN_DEG` (100°) of turning | Flip direction, `FieldPos_TurnedAround()`, **return `TURNED_AROUND`** | Now on the same edge, facing the other way |
 | | `TAPE_CHANGED` before 100° | stay (ignore) | FC starts on the tape; at a corner it also crosses the other edge early |
 | | Safety (`TURN_MAX_DEG` = 240°) | **return `LINE_LOST`** | Couldn't find the tape again |
 | | `FRONT_BUMPED`, `REAR_BUMPED` | stay (ignore) | |
@@ -1363,6 +1365,41 @@ ES_Event RunXSubHSM(ES_Event ThisEvent) {
     return ThisEvent;
 }
 ```
+
+### 9.8 Perimeter run: find it, then follow it forever
+The navigation-only machine: place the robot **anywhere on the track**, and it finds the perimeter, never gets fooled by the center cross (it either drives straight through it or uses the cross arm to reach the perimeter), then follows the straight edges and corners until it is switched off. Towers, beacon and bumpers are not part of this run mode. The full game machine in §8 is this plus those states.
+
+**Machines:** the top level below, Find perimeter (§9.1, unchanged) and Follow perimeter (§9.2, run-mode rules below). Diagram: `PerimeterRunFSM.gv`.
+
+| State | Input | Guard | Action | Next |
+|---|---|---|---|---|
+| Init | `ES_INIT` | `!Robot_WasBrownout` | brake | WaitToStart |
+| | `ES_INIT` | `Robot_WasBrownout` | init Find in FollowUnknown (§9.1) | FindPerimeter |
+| WaitToStart | `TOP_TIMER` | — | entry started it at `START_DELAY_MS` (3000) | FindPerimeter |
+| FindPerimeter | `PERIMETER_FOUND` | — | returned by §9.1, robot braked on the edge heading clockwise; `fieldOnRight = TRUE`; init Follow | FollowPerimeter |
+| FollowPerimeter | `LINE_LOST` | — | returned by §9.2 (reverse 6" or realign failed) | FindPerimeter |
+| Any | `BEACON_*`, `TOWER_TAPE_FOUND`, `FRONT_BUMPED`, `REAR_*` | — | ignore | stay |
+
+There is no exit: the run ends only when power is cut. FollowPerimeter loops on itself through straights and corners; FindPerimeter is re-entered only from `LINE_LOST`.
+
+**Where the robot goes, from any start**
+| Placed on | Path |
+|---|---|
+| Bare floor | Seek → hits a line (arm, edge or cross arm) → (cross arm: Kick → Drive → Check → CrossThrough → CrossArm → Arm_tip → Seek) → edge head-on → Corner_CR_on → Swing_right → FollowPerimeter |
+| Cross arm | Kick → Drive → either `Arm_tip` (facing outward) or Check → CrossThrough → CrossArm → `Arm_tip` (facing inward, drives through the center) → Seek → edge → swing → FollowPerimeter |
+| Center of the cross | Same as inward: Check sees `FL && FC`, CrossThrough rides straight over the middle, CrossArm follows the far arm out |
+| Perimeter straight | Kick → Drive → Check → `!FC` at the first corner → CornerBackup → swing → FollowPerimeter |
+| Perimeter corner | Kick → Drive → Check → CornerBackup → swing → FollowPerimeter |
+
+**Follow in run mode (§9.2 with these rules)**
+- **Aligned** (FC + BC only, `0x22`) = on the tape; drive at `BASE_SPEED` with the back-row trim (§6.3). FL or FR alone with FC off steers back; BL/BR with FC on nudges trim.
+- Corner: FC + field-side sensor (`F_FIELD`) → timed `CORNER_CREEP_IN`, then pivot toward the field until FC is on (BC is off just after a corner, so stop on FC alone), then back to OnLine.
+- Tower stub (FC + outside sensor): ignore and keep following. `FL + FR together` on the perimeter can't happen: ignore.
+- `FRONT_BUMPED`: ignore (run mode has no Bumped). `BEACON_*`: ignore.
+- The cross is never reached from the perimeter (its arm tips are ~24" away), so Follow has no cross test.
+- Lost the line: LostLine reverses ≤ 6", Realign pivots ≤ 60°; failure returns `LINE_LOST` and Find perimeter's cross-safe Check restarts the search, so one bad bump can't strand it.
+
+**Checks done on this design:** every state has an exit; the only terminal loop is FollowPerimeter ↔ FindPerimeter; each sensor decision is a mask test (timers only for kick, swing, steering ramp, corner creep and the start delay). Not yet run on a robot.
 
 ---
 
