@@ -1,0 +1,32 @@
+digraph FindPerimeter {
+    rankdir=TB;
+    init [shape="point", color="black", style="filled", width=.1, forcelabels=false];
+    node [shape=box, style=rounded];
+    StartCheck [shape=diamond];
+    Found [shape=hexagon, label="return PERIMETER_FOUND\n(brake, clockwise)"];
+    init -> StartCheck [label=<<u>Init [!brownout]</u>>];
+    init -> FollowUnknown [style=dashed, label=<<u>Init [brownout]</u>>];
+    StartCheck -> Kick [label=<<u>FC &amp;&amp; BC</u>>];
+    StartCheck -> Seek [label=<<u>else (bare floor)</u>>];
+    Kick -> FollowUnknown [label=<<u>FIND_PERIM_TIMER</u>>];
+    FollowUnknown -> Seek [label=<<u>TAPE [FL,FC,FR all off]</u><br/><i>Arm_tip, onPerimeter = TRUE</i>>];
+    FollowUnknown -> Check [label=<<u>TAPE [CR &amp;&amp; !backBlind]</u>>];
+    FollowUnknown -> FollowUnknown [label=<<u>TAPE [else]</u><br/><i>BackBlindCheck, UpdateTarget</i>>];
+    Check -> CrossThrough [label=<<u>TAPE [FL &amp;&amp; FC]</u>>];
+    Check -> CornerBackup [label=<<u>TAPE [!FC]</u><br/><i>Corner_FC_off</i>>];
+    Check -> FollowUnknown [label=<<u>TAPE [!CR]</u><br/><i>Check_false_CR</i>>];
+    CrossThrough -> CrossArm [label=<<u>TAPE [!FL &amp;&amp; !FR &amp;&amp; FC]</u><br/><i>Cross_confirmed</i>>];
+    CrossThrough -> CornerBackup [label=<<u>TAPE [!FC]</u><br/><i>Corner_after_all</i>>];
+    CrossArm -> Seek [label=<<u>TAPE [FL,FC,FR all off]</u><br/><i>Arm_tip, onPerimeter = TRUE</i>>];
+    CrossArm -> CrossArm [label=<<u>TAPE [else]</u><br/><i>CrossBackBlind, UpdateTarget</i>>];
+    Seek -> AcquirePreSwing [label=<<u>TAPE [CR]</u>>];
+    Seek -> AcquireSwing [label=<<u>TAPE [FL &amp;&amp; FC &amp;&amp; FR &amp;&amp; !CR]</u><br/><i>Seek_no_CR</i>>];
+    CornerBackup -> CornerBackup [label=<<u>TAPE [CR]</u><br/><i>crSeen = TRUE</i>>];
+    CornerBackup -> AcquirePreSwing [label=<<u>TAPE [!CR &amp;&amp; crSeen]</u><br/><i>brake</i>>];
+    AcquirePreSwing -> AcquireSwing [label=<<u>FIND_PERIM_TIMER</u>>];
+    AcquireSwing -> AcquireSwing [label=<<u>TAPE [!FC]</u><br/><i>fcSeenOff = TRUE</i>>];
+    AcquireSwing -> AcquireSwingExtra [label=<<u>TAPE [FC &amp;&amp; fcSeenOff &amp;&amp; half SWING_MS]</u><br/><i>Swing_FC_on</i>>];
+    AcquireSwing -> AcquireSwingExtra [label=<<u>FIND_PERIM_TIMER</u><br/><i>Swing_time</i>>];
+    AcquireSwingExtra -> Found [label=<<u>FIND_PERIM_TIMER [onPerimeter]</u><br/><i>brake</i>>];
+    AcquireSwingExtra -> Kick [label=<<u>FIND_PERIM_TIMER [!onPerimeter]</u><br/><i>brake, backBlind = TRUE</i>>];
+}

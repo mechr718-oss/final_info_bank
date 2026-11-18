@@ -81,11 +81,11 @@ Startup
 | Dead robot | Against the bottom perimeter, inside the tape | Notes |
 
 ### 2.2 Direction convention
-- **v5 (side shooter):** the shooter is on the robot's right and the beacon detector on its left, so the robot should drive **counterclockwise** (field on its left). Find perimeter's align turn now always pivots **left**, and if it still locks on clockwise, the top level turns it around first (Reorient, §8.4). A bump turn-around (§9.6) still flips the direction; until the next flip, towers and the beacon are ignored.
+- **v5 (side shooter):** the shooter is on the robot's right and the beacon detector on its left, so the robot should drive **counterclockwise** (field on its left). Find perimeter (v15) always ends heading **clockwise**, so the top level always turns it around first (Reorient, §8.4). A bump turn-around (§9.6) still flips the direction; until the next flip, towers and the beacon are ignored.
 - The robot can drive **both** ways: it flips on every bump (§9.6). So every left/right label in the diagrams has to be read as "toward the field" / "away from the field" (§8.1).
 - Clockwise = field on the right, corners are right turns, tower on the left. Counterclockwise = the mirror image.
 - Every turn in the code is written as **toward the field** or **away from the field**, using the runtime `fieldOnRight` flag (§6.2).
-- Find perimeter's align turn decides the direction: pivoting right onto the tape from inside gives clockwise; pivoting left gives counterclockwise.
+- Find perimeter (v15) swings right onto the tape, so it always ends clockwise; Reorient then flips it to counterclockwise.
 - Where this document says FL/FR or left/right without qualification, it means the clockwise case; mirror them for counterclockwise.
 
 ### 2.3 Sensor geometry
@@ -108,7 +108,7 @@ Startup
   - **Corner = the front row runs off the END of the edge.** While the robot's center is on the tape, FC can't leave a straight edge sideways. So either the whole front row goes off while MC is still on, or FC goes off with only the field-side sensor on.
   - On a corner, creep 3.5" (whole row off) or 4" (FC off) so MC is on the new edge's center, then pivot toward the field.
   - A suspected corner where the row never runs off the edge was a false alarm: keep following.
-  - **Cross vs corner** while finding the perimeter: both light all three front sensors. The cross continues past it; the corner ends (the rule above).
+  - **Cross vs corner** while finding the perimeter (§9.1): CR sees the crossing line first, then the front row decides. `FL && FC` = cross (FC stays on the arm); `!FC` = corner (the line ended).
 - **Tested:** in the Robot Sim this geometry raised wins from 72% to 79% of 300 fields and cut the average win time from 67 s to 57 s.
 - `FRONT_OFFSET` = distance from MC to the front row (~5.5"); `BACK_OFFSET` = MC to the back row (~5.5"). [TUNE]
 - For clockwise travel: **field-side** sensors are FR / BR, **outside** sensors are FL / BL.
@@ -122,7 +122,8 @@ Startup
 | FC + field-side front sensor | v6: just off-center (1.5" spacing). Corner = whole front row off with MC on, or FC off with only the field side on (§2.3) | Follow, Find perimeter |
 | FC + outside front sensor | Tower stub (leaves the perimeter outward) [ASSUMPTION] | Follow, Find perimeter |
 | BC + outside back sensor | Tower stub, seen by the back row | Follow |
-| FL and FR on together (while following) | Center cross intersection | Find perimeter |
+| CR on, then `FL && FC` (while following, Check) | Center cross intersection | Find perimeter |
+| CR on, then `!FC` (while following, Check) | Perimeter corner | Find perimeter |
 | All front off (while following) | Lost the line, or end of a cross arm | Follow, Find perimeter |
 | 2+ front sensors on (while driving across) | A line crossing our path (an edge) | Find perimeter |
 | FC + MC on | Lined up on a line (two points) | All aligns |
@@ -541,7 +542,7 @@ typedef enum {
 | `REAR_BUMPED` / `REAR_RELEASED` | — | BumperService | Debounced back bumper press / release |
 | `BEACON_FOUND` / `BEACON_LOST` | — | CheckBeacon | Debounced beacon detector edges |
 | `BATTERY_LOW` | mV | CheckBattery | Optional |
-| `PERIMETER_FOUND` | — | Find perimeter sub (returned up) | Locked onto the perimeter; direction set from the align turn |
+| `PERIMETER_FOUND` | — | Find perimeter sub (returned up) | On the perimeter, braked, heading clockwise (§9.1) |
 | `TOWER_TAPE_FOUND` | `FRONT_ROW` or `BACK_ROW` | Follow sub (returned up) | Tower stub detected, and by which row |
 | `FACING_TOWER` | — | Find tower sub | Shooter aimed |
 | `FIND_TOWER_FAILED` | — | Find tower sub | Couldn't line up on the stub |
@@ -694,7 +695,7 @@ static uint8_t fieldOnRight;   // set by Find perimeter at PERIMETER_FOUND, flip
 void Robot_PivotTowardField(int8_t s)  { if (fieldOnRight) Robot_SetMotors(s, -s); else Robot_SetMotors(-s, s); }
 void Robot_PivotAwayFromField(int8_t s){ if (fieldOnRight) Robot_SetMotors(-s, s); else Robot_SetMotors(s, -s); }
 ```
-- Find perimeter sets `fieldOnRight` from its align turn (pivoting right onto the tape from inside → `TRUE`) and calls `FieldPos_Reset(fieldOnRight)`.
+- Find perimeter always ends clockwise, so the top level sets `fieldOnRight = TRUE` on `PERIMETER_FOUND` and calls `FieldPos_Reset(fieldOnRight)`.
 - Every FSM uses only these names, so a turn-around flips corners, tower stubs and pivots everywhere at once.
 
 ### 6.3 Steering and trim
@@ -736,7 +737,7 @@ uint8_t FrontCount(m)       { return ON(m,FL_BIT) + ON(m,FC_BIT) + ON(m,FR_BIT);
 uint8_t IsCorner(m)         { return ON(m,FC_BIT) && ON(m,F_FIELD) && !ON(m,F_OUT); }
 uint8_t IsTowerStubFront(m) { return ON(m,FC_BIT) && ON(m,F_OUT)  && !ON(m,F_FIELD); }
 uint8_t IsTowerStubBack(m)  { return ON(m,BC_BIT) && ON(m,B_OUT)  && !ON(m,B_FIELD); }
-uint8_t IsCrossFront(m)     { return ON(m,FL_BIT) && ON(m,FR_BIT); }   // only meaningful while following
+uint8_t IsCrossFront(m)     { return ON(m,FL_BIT) && ON(m,FC_BIT); }   // only meaningful in Find perimeter's Check (§9.1)
 uint8_t FrontAllOff(m)      { return FrontCount(m) == 0; }
 uint8_t IsAligned(m)        { return ON(m,FC_BIT) && ON(m,MC_BIT); }
 uint8_t IsPerimeterAligned(m){ return IsAligned(m) && ON(m,BC_BIT); }
@@ -747,7 +748,7 @@ uint8_t BackReachedCorner(m){ return (ON(m,BC_BIT) && ON(m,B_FIELD)) ||
 - `IsCrossFront` only means "cross" while the robot is following a line. Hitting *any* line head-on (driving across it) lights all three front sensors.
 
 ### 7.2 Creep onto a line you're crossing (MC)
-Used when the robot drives *across* a line and then wants to pivot onto it: Find perimeter CenterOverTape, Attack Rejoin (first half).
+Used when the robot drives *across* a line and then wants to pivot onto it: Attack Rejoin (first half).
 - Drive forward at `CREEP_SPEED` until **MC turns on**. The wheel axis is then over the tape, so a pivot in place lands on the line.
 - Safety limit `CREEP_MAX_IN` (8"). If it runs out, continue anyway (the align step will catch it or fail).
 
@@ -808,8 +809,7 @@ The diagrams don't all assume the same travel direction. Each "left" or "right" 
 
 | Diagram | Label | Matches |
 |---|---|---|
-| Find perimeter | AlignToLine "Pivot right to FC + BC" | Clockwise (pivoting right onto the tape from inside leaves the field on the right) |
-| Find perimeter | TurnCorner "Pivot left" | Counterclockwise |
+| Find perimeter (v15) | AcquireSwing "SwingRight" | Clockwise (always; Reorient flips it) |
 | Follow perimeter | "FC + FL = corner", TurnCorner "Pivot left" | Counterclockwise |
 | Top-level HSM | Find tower "Pivot right, aim shooter" | Counterclockwise (tower on the right) |
 | Find tower | TurnToTower "Pivot left (tower side)"; "stub FC + FL, corner FC + FR" | Clockwise |
@@ -817,7 +817,7 @@ The diagrams don't all assume the same travel direction. Each "left" or "right" 
 | Attack robot | AimBeacon "Pivot right", Rejoin "pivot right" | Clockwise |
 
 - **With the turn-around (§9.6) the robot drives both ways**, so no fixed left/right is right all the time. Read every drawn label field-relative:
-  - Corner turns, AlignToLine, TurnBack, AimBeacon, Rejoin, TurnAround: **toward the field**.
+  - Corner turns, TurnBack, AimBeacon, Rejoin, TurnAround: **toward the field**.
   - TurnToTower (Find tower): **away from the field** (the tower is outside).
   - "FC + FL = corner" → **FC + field-side sensor**; "stub FC + FL" → **FC + outside sensor**.
 - Suggested: relabel the diagrams "toward field" / "away from field" so they stay right in both directions. The code already works this way (`fieldOnRight`, §6.2).
@@ -825,12 +825,12 @@ The diagrams don't all assume the same travel direction. Each "left" or "right" 
 ### 8.2 States
 | State | Runs sub-HSM | Drawn? |
 |---|---|---|
-| FindPerimeter | §9.1 "Runs once at start" | Drawn |
+| FindPerimeter | §9.1 "Find the perimeter, telling the cross from the edge" | v15 |
 | FollowPerimeter | §9.2 "Tape-follow, watch both" | Drawn |
 | AttackRobot | §9.3 v5 "Center beacon, rotate 180°, fire 2, rotate back" | Drawn (updated) |
 | FindTower | §9.4 v5 "Creep until the side sensor sees the marked hole" | Drawn (updated) |
 | Shoot | §9.5 "Fire ball" (no turn back) | Drawn |
-| Reorient | §9.6 machine, used once if Find perimeter locks on clockwise | **Added** (v5) |
+| Reorient | §9.6 machine, used after every Find perimeter (it always ends clockwise) | **Added** (v5) |
 | Done | — | Drawn |
 | Bumped | §9.6 Turn-around FSM | **Added**: not on the HSM drawing |
 
@@ -850,11 +850,11 @@ static int8_t   currentTowerEdge = NONE;  // edge of the tower being aimed at
 | State | Input | Next | Source |
 |---|---|---|---|
 | Init | `ES_INIT` | FindPerimeter | Drawn (start) |
-| FindPerimeter | `PERIMETER_FOUND` while clockwise (`fieldOnRight`) | Reorient (turn around so the shooter faces out) | v5 |
+| FindPerimeter | `PERIMETER_FOUND` (returned by §9.1, always clockwise) | Reorient (turn around so the shooter faces out); set `fieldOnRight = TRUE`, `FieldPos_Reset()`; `lastShotTower = NONE` if this is a re-run | v15 |
 | Reorient | `TURNED_AROUND` / `LINE_LOST` | FollowPerimeter / FindPerimeter | v5 |
 | FollowPerimeter | `BEACON_FOUND` or tower detected while in CornerCreep / TurnCorner / LostLine / Realign | stay; remember it, re-check on the next OnLine entry | v5 (sim: acting mid-corner caused DQs) |
 | FollowPerimeter | `BEACON_FOUND` or tower while clockwise (after a bump flip) | stay (ignore: shooter and beacon face the wrong way) | v5 |
-| FindPerimeter | `PERIMETER_FOUND` (returned by §9.1) | FollowPerimeter; set `fieldOnRight` from the align turn, `FieldPos_Reset()`; `lastShotTower = NONE` if this is a re-run | Drawn |
+| Reorient | `TURNED_AROUND` | FollowPerimeter (counterclockwise) | v5 |
 | FindPerimeter | `BEACON_*`, `REAR_*`, `TOWER_TAPE_FOUND` | stay (ignore) | Design |
 | FollowPerimeter | `ES_ENTRY` with `attackDone && towersShot >= TOWERS_TO_SHOOT` | Done | Drawn ("Both done") |
 | FollowPerimeter | `ES_ENTRY` with both towers shot but `!attackDone` | stay: keep circling, only watching for the beacon | Both towers hit, robot not found yet |
@@ -893,7 +893,7 @@ static int8_t   currentTowerEdge = NONE;  // edge of the tower being aimed at
 | ID | Gap | Proposed handling |
 |---|---|---|
 | G-H1 | The bump FSM has no box on the HSM drawing | Add **Bumped** (turn around): Follow perimeter —`FRONT_BUMPED`→ Bumped —`TURNED_AROUND`→ Follow perimeter |
-| G-H2 | Nothing recovers if the robot loses the tape for good | Any state returning `LINE_LOST` → Find perimeter (its cross rule keeps it safe) |
+| G-H2 | Nothing recovers if the robot loses the tape for good | Any state returning `LINE_LOST` → Find perimeter (its Check/CrossThrough cross test keeps it safe) |
 | G-H3 | `BEACON_FOUND` only fires on a change; if the beacon is already in view when the robot returns to Follow (after shooting or avoiding), the attack never starts | On entering Follow, check `Beacon_IsOn()` |
 | G-H4 | Tower and beacon at the same moment | Tower wins: if `TOWER_TAPE_FOUND` comes first, Find tower ignores the beacon; if `BEACON_FOUND` comes first, the top level checks the live tape mask for a stub and goes to Find tower instead |
 | G-H5 | Drawing says `ROBOT_HIT`; the Attack FSM ends with `ATTACK_DONE` and can also miss | Use `ATTACK_DONE` with a hit/miss parameter; a miss starts a cooldown and allows a retry |
@@ -983,55 +983,81 @@ ES_Event RunTopHSM(ES_Event ThisEvent) {
 
 ## 9. Sub-HSMs (exactly as drawn)
 
-### 9.1 Find perimeter FSM
-**Drawn states:** BumpRecovery, DriveForward, CenterOverTape, AlignToLine, FollowLine, DriveThroughCross, CornerCreep, TurnCorner. **Ends with:** Post `PERIMETER_FOUND`.
-**Drawn footnote:** "Both returns to DriveForward set the flag: the next line is the perimeter." (flag = `nextLineIsPerimeter`)
-**v10: center cross → turn 180°, find perimeter.**
-- **Detect:** all three front sensors light (crossing a perpendicular line), then FC stays on with both side sensors clear. The line continued past the crossing, so it's the cross; a perimeter corner would have ended.
-- **What happens:**
-  - In Find perimeter: DriveThroughCross → **CrossTurn** (timed 180° pivot) → DriveForward with `nextLineIsPerimeter` set. The robot follows its own arm back out (front tape is ignored until the front row has cleared once), and the next line it hits is the perimeter.
-  - In Follow: `CROSS_SEEN` → top → Find perimeter, starting in CrossTurn.
-  - If instead all three light and then the whole front row goes off (MC still on), it was a perimeter corner: CornerCreep 3.5", then turn.
+### 9.1 Find perimeter FSM (v15: cross detection)
+**States:** StartCheck, Kick, FollowUnknown, Check, CrossThrough, CrossArm, Seek, CornerBackup, AcquirePreSwing, AcquireSwing, AcquireSwingExtra. **Ends with:** return `PERIMETER_FOUND`, robot braked on the perimeter and heading **clockwise** (field on the right).
+**Replaces** the v10 machine (BumpRecovery, DriveForward, CenterOverTape, AlignToLine, FollowLine, DriveThroughCross, CornerCreep, TurnCorner, CrossTurn). There is no 180° cross turn any more: the robot drives through the cross, rides the far arm to its tip, and meets a perimeter edge head-on.
 
-**v5 change:** AlignToLine now always pivots **left** (safety 200°) so the robot ends up counterclockwise with the side shooter facing out (§2.2).
+**Rules for this machine**
+- Every decision is a `TAPE_CHANGED` pattern. Timers are only for the kick, the pre-swing delay, the swing and the steering ramp. No search timeout: place the robot where a straight run meets tape.
+- Mask bits: `FL0 FC1 FR2 CR3 BL4 BC5 BR6`. **CR** is the sensor in bit 3 (the middle sensor, `MC` in §2.3). [CHECK: the design notes say CR reaches a crossing line about 1.4" before FL/FR; confirm the real sensor positions.]
+- Direction is fixed: swings are right turns, so the robot always ends clockwise. The top level then runs Reorient (§8.4) to face counterclockwise.
 
-| State (drawn subtitle) | Input | Next | Source |
-|---|---|---|---|
-| DriveForward ("Straight, back row ignored") | Any front sensor on | CenterOverTape | Drawn |
-| | `FRONT_BUMPED` | BumpRecovery | Drawn (↔) |
-| | Search timer (`FIND_SEARCH_MS`, no tape) | BumpRecovery | Safety |
-| BumpRecovery ("On front bump") | Back up, then turn ~90° (alternating direction), both timed; turn timer done | DriveForward | Drawn (↔) |
-| | `REAR_BUMPED` during the back-up | (ends the back-up early, starts the turn) | Design |
-| CenterOverTape ("Creep so wheels on tape") | "Timer" | AlignToLine | Drawn (how: creep until **MC on**; the timer is the backup, see N1) |
-| | `FRONT_BUMPED` | BumpRecovery | Design |
-| AlignToLine ("Pivot right to FC + BC") | FC + BC on, flag set | Post `PERIMETER_FOUND` | Drawn |
-| | FC + BC on, flag not set | FollowLine | Drawn ("Flag not set") |
-| | Safety timer (never lined up) | DriveForward | Safety |
-| | `FRONT_BUMPED` | BumpRecovery | Design |
-| FollowLine ("Steer + trim, watch front") | Front all off (arm tip) | DriveForward, set flag | Drawn |
-| | FL + FR = cross | DriveThroughCross | Drawn |
-| | FC + one side | CornerCreep | Drawn (see G-F1) |
-| | FC on, or drift (FC off, one side on) | stay: steer + trim | Drawn (subtitle) |
-| | Safety timer (`FOLLOW_MAX_MS`) | DriveForward | Safety |
-| | `FRONT_BUMPED` | BumpRecovery | Design |
-| DriveThroughCross ("Until front clear") | Front all off (past the far arm's tip) | DriveForward, set flag | Drawn |
-| | FL / FR / FC changes while crossing | stay (steer on FC only) | Design |
-| | `FRONT_BUMPED` | BumpRecovery | Design |
-| CornerCreep ("Creep so wheels on corner") | "Timer" | TurnCorner | Drawn (how: creep until **MC off**, then reverse 1" on a timer; that timer is this arrow, see N2) |
-| | `FRONT_BUMPED` | BumpRecovery | Design |
-| TurnCorner ("Pivot left") | FC on new edge | Post `PERIMETER_FOUND` | Drawn (how: FC + MC on) |
-| | Safety timer (120°) | DriveForward | Safety |
+**The three sensor facts**
+| Fact | Pattern | Used in |
+|---|---|---|
+| **Cross vs corner.** CR reaches any crossing line first; FL and FR reach it ~1.4" later. At the cross the whole front row lights and FC stays on the arm. At a corner the line ends, so FC runs off its end as FR reaches the new line. | `FL && FC` → cross<br>`!FC` → corner | Check, CrossThrough |
+| **A perimeter line never ends.** FL and FR straddle the 2" tape, so the whole front row is off only when the robot is 3"+ off a straight line. While following, that only happens at a cross arm tip. Perimeter corners are caught by CR first. | `!FL && !FC && !FR` → arm tip | FollowUnknown, CrossArm |
+| **CR stays on a real line while deciding.** CR needs 2" of travel to cross the tape and the front row answers after 1.4". If CR goes off first, it was a speck. | `!CR` before an answer → false trigger | Check |
 
-All states: `REAR_BUMPED` (except BumpRecovery's back-up), `BEACON_*` → ignore.
+**Mask guards**
+```c
+#define ON(m, b)          (((m) >> (b)) & 1)
+#define FRONT_ALL_OFF(m)  (!ON(m, FL_BIT) && !ON(m, FC_BIT) && !ON(m, FR_BIT))
+#define FRONT_ALL_ON(m)   (ON(m, FL_BIT) && ON(m, FC_BIT) && ON(m, FR_BIT))
+#define IS_CROSS(m)       (ON(m, FL_BIT) && ON(m, FC_BIT))      // in Check: whole front row lit
+#define LINE_ENDED(m)     (!ON(m, FC_BIT))                      // in Check / CrossThrough: corner
+#define CROSS_CLEARED(m)  (!ON(m, FL_BIT) && !ON(m, FR_BIT) && ON(m, FC_BIT))
+```
 
-**How the drawn arrows are detected (no change to the states):**
-- **N1:** the drawing says "Timer" for CenterOverTape. With the middle sensor, the creep ends when MC turns on (the wheels are over the tape). The timer stays as a backup.
-- **N2:** the drawing says "Timer" for CornerCreep. MC is already on the line while following toward a corner, so it can't mark the corner. The creep runs until MC turns **off** (just past the corner's outer edge), then reverses 1" (half the tape width) on a timer, putting MC on the new edge's centerline. That timer firing is the drawn arrow.
-- **N3:** AlignToLine says "FC + BC". At the tip of a cross arm, BC can stay off forever (the arm ends behind the robot). Use **FC + MC** to decide "lined up", then let FollowLine sort out cross vs perimeter as drawn.
+| State | Entry / during | Input | Guard (in this order) | Action | Next |
+|---|---|---|---|---|---|
+| StartCheck (pseudo) | `onPerimeter = FALSE`; reads `Tape_GetMask()` once | entry | `FC && BC` | placed on a line | Kick |
+| | | entry | else | bare floor or part of a line | Seek |
+| Kick (log `Kick`) | `lastFrontErr = lastBackErr = targetTurn = turn = 0`; `Robot_Forward(KICK_SPEED)` (80); `FIND_PERIM_TIMER` = `KICK_MS` (150). `TAPE`: `BackBlindCheck` only | `FIND_PERIM_TIMER` | — | `UpdateTarget(Tape_GetMask())`, `RampStep()`, start `RAMP_TIMER` | FollowUnknown |
+| FollowUnknown (log `Drive` / `Drive_back_blind`) | `UpdateTarget`, `RampStep`; `RAMP_TIMER` (20 ms): `RampStep()`, restart | `TAPE` | `!FL && !FC && !FR` | log `Arm_tip`, `onPerimeter = TRUE` | Seek |
+| | | `TAPE` | `CR && !backBlind` | — | Check |
+| | | `TAPE` | else | `BackBlindCheck`, `UpdateTarget` | stay |
+| Check (log `Check_CR_on`) | `targetTurn = turn = 0`; `Robot_Forward(ST_SPEED)`; ramp ticks ignored | `TAPE` | `FL && FC` | whole front row lit: the cross | CrossThrough |
+| | | `TAPE` | `!FC` | log `Corner_FC_off` | CornerBackup |
+| | | `TAPE` | `!CR` | log `Check_false_CR`, `UpdateTarget` | FollowUnknown |
+| CrossThrough (log `Cross_through`) | `targetTurn = turn = 0`; straight at `ST_SPEED`; `backBlind = TRUE`, `backCrossSeen = FALSE`; CR and ramp ticks ignored | `TAPE` | `!FC` | log `Corner_after_all` | CornerBackup |
+| | | `TAPE` | `!FL && !FR && FC` | log `Cross_confirmed`, `UpdateTarget` | CrossArm |
+| CrossArm (log `Cross_arm`) | `RAMP_TIMER`: `RampStep()`; CR ignored | `TAPE` | `!FL && !FC && !FR` | log `Arm_tip`, `onPerimeter = TRUE` | Seek |
+| | | `TAPE` | else | `CrossBackBlind` (BL or BR on sets `backCrossSeen`; then both off clears `backBlind`, log `Back_row_on`), `UpdateTarget` | stay |
+| Seek (log `Seek` / `Seek_perimeter`) | `targetTurn = turn = 0`; straight at `ST_SPEED`; no correction | `TAPE` | `CR` | line crosses in front | AcquirePreSwing |
+| | | `TAPE` | `FL && FC && FR && !CR` | log `Seek_no_CR` | AcquireSwing |
+| CornerBackup (log `Corner_backup`) | `onPerimeter = TRUE`; `crSeen = CR`; `Robot_Reverse(ST_SPEED)`; exit `Robot_Stop()` | `TAPE` | `CR` | `crSeen = TRUE` | stay |
+| | | `TAPE` | `!CR && crSeen` | brake: CR just left the near edge | AcquirePreSwing |
+| AcquirePreSwing (log `Corner_CR_on`) | `targetTurn = turn = 0`. If `SWING_DELAY_IN` is 0 (now), go straight to AcquireSwing; else straight at `ST_SPEED`, `FIND_PERIM_TIMER` = `SWING_DELAY_IN × MS_PER_INCH_BASE` | `FIND_PERIM_TIMER` | — | — | AcquireSwing |
+| AcquireSwing (log `Swing_right`) | `swingStart = now`; `fcSeenOff = !FC`; `Robot_SwingRight(SWING_SPEED)` (60); `FIND_PERIM_TIMER` = `SWING_MS` (1450) | `TAPE` | `!FC` | `fcSeenOff = TRUE` | stay |
+| | | `TAPE` | `FC && fcSeenOff && half of SWING_MS gone` | log `Swing_FC_on` | AcquireSwingExtra |
+| | | `FIND_PERIM_TIMER` | — | log `Swing_time` | AcquireSwingExtra |
+| AcquireSwingExtra (log `Swing_extra`) | `FIND_PERIM_TIMER` = `SWING_EXTRA_MS` (400); exit `Robot_Stop()`, `backBlind = TRUE` | `FIND_PERIM_TIMER` | `onPerimeter` | log `Swing_done`; **return `PERIMETER_FOUND`** | top: Reorient |
+| | | `FIND_PERIM_TIMER` | `!onPerimeter` | log `Swing_done`; started on bare floor and found an unknown line | Kick |
 
-**Gaps:**
-- **G-F1:** "FC + one side" also matches the tower stub, which lights the *outside* sensor. With TurnCorner always pivoting toward the field, a stub would send the robot outward. Proposed: FC + field-side sensor → CornerCreep (drawn arrow); FC + outside sensor → Post `PERIMETER_FOUND` directly (only the perimeter has stubs).
-- **G-F2:** Direction: AlignToLine pivots right (clockwise) but TurnCorner pivots left (counterclockwise). See §8.1.
+All states: `BEACON_*`, `REAR_*`, `TOWER_TAPE_FOUND` → ignore. Exit of every state stops `FIND_PERIM_TIMER`.
+
+**Why the order of the tests matters**
+- Check tests the cross (`FL && FC`) before the corner (`!FC`). If a drifted robot gets FL onto a corner's line just before FC's off-confirm lands, CrossThrough still catches it and sends it to CornerBackup.
+- CornerBackup exists because deciding took the robot past the swing point. Backing up until CR comes off the line puts it where a normal corner starts.
+- Seek from an arm tip meets a perimeter edge head-on, so the swing lands it on the edge heading clockwise.
+
+**Hand-off after `PERIMETER_FOUND`:** braked, centered on the perimeter tape, clockwise. `backBlind = TRUE` (ignore the back row until BC sees tape). The motors need a kick (80 for 150 ms) before the straight-line ramp. Nothing about the cross carries over.
+
+**Expected logs**
+| Start | S-line sequence |
+|---|---|
+| Cross arm, toward the center | `Kick → Drive → Check_CR_on → Cross_through → Cross_confirmed → Cross_arm → Back_row_on → Arm_tip → Seek_perimeter → Corner_CR_on → Swing_right → Swing_FC_on → Swing_extra → Swing_done → Reorient` |
+| Cross arm, toward the tip | `Kick → Drive → Arm_tip → Seek_perimeter → Corner_CR_on → Swing_right → … → Reorient` |
+| Perimeter, straight part | `Kick → Drive → Check_CR_on → Corner_FC_off → Corner_backup → Corner_CR_on → Swing_right → … → Reorient` |
+| Bare floor | `Seek → Corner_CR_on → Swing_right → … → Kick → Drive → (a row above)` |
+| Brownout reset | `Drive_after_brownout →` (Drive row of whichever line it is on) |
+
+**Notes**
+- On a brownout restart the sub starts in FollowUnknown (log `Drive_after_brownout`) instead of StartCheck.
+- `RAMP_TIMER` is `FOLLOW_TIMER` (4). Find perimeter and Follow never run together, so they share it.
+- This version has not been compiled or run; check it against the logs above on the field. The state diagram is in `FindPerimeterFSM.gv`.
+- **G-F1 (tower stub taken as a corner)** from v10 no longer applies here: the stub test lives in Follow (§9.2), and Find perimeter never turns toward a stub because every swing is a right turn off a head-on edge.
 
 ### 9.2 Follow perimeter FSM
 **Drawn states:** OnLine, SteerLeft, SteerRight, CornerCreep, TurnCorner, LostLine, Realign.
@@ -1349,13 +1375,13 @@ IDs are for test tracking (§12).
 ### 10.1 Startup and finding the perimeter
 | ID | Situation | Handling |
 |---|---|---|
-| E1 | First tape hit is the cross | Cross rule (FL + FR while following) → drive through → flag → next line is the perimeter |
-| E2 | Lines up on a cross arm facing its tip | Arm tip (all front off) → flag → drive forward → perimeter |
+| E1 | First tape hit is the cross | Check sees `FL && FC` → CrossThrough → CrossArm → arm tip → Seek → corner swing onto the perimeter |
+| E2 | Lines up on a cross arm facing its tip | Arm tip (all front off) → `onPerimeter` → Seek → perimeter |
 | E3 | Starts on the cross | Same as E1/E2 |
-| E4 | Drives parallel to an edge, never hits tape | Search timeout → back up, turn, retry |
-| E5 | Opponent in the way while searching | Front bump → back up, turn (alternating), retry |
+| E4 | Drives parallel to an edge, never hits tape | Not handled (no-timing rule in §9.1); place the robot so a straight run meets tape |
+| E5 | Opponent in the way while searching | Not handled in v15 Find perimeter (see E4) |
 | E6 | Hits the perimeter right at a corner and lines up facing the wrong way | Next corner lights the outside sensor and looks like a stub. Rare; limitation (§15) |
-| E7 | Physical wall instead of / next to the tape | [OPEN] treat a bump in CenterOverTape as "on the perimeter" |
+| E7 | Physical wall instead of / next to the tape | [OPEN] no bump handling in the v15 Find perimeter; add one if walls exist |
 
 ### 10.2 Following the perimeter
 | ID | Situation | Handling |
@@ -1374,7 +1400,7 @@ IDs are for test tracking (§12).
 ### 10.3 Center cross
 | ID | Where | Handling |
 |---|---|---|
-| E18 | Find perimeter | Cross rule + flag (E1–E3) |
+| E18 | Find perimeter | Check / CrossThrough / CrossArm (E1–E3) |
 | E19 | Follow perimeter | Never reached (tips ~24" from the tape) |
 | E20 | Turn-around | Pivots in place on the tape; the front row stays within ~6" of the perimeter, and the cross is ≥ 24" away |
 | E24 | Attack out-and-back | ReturnForward ignores tape; ToTape starts near the edge |
@@ -1453,7 +1479,10 @@ IDs are for test tracking (§12).
 | `TAPE_ON_THRESH[i]`, `TAPE_OFF_THRESH[i]` | measure per sensor | |
 | `BUMP_SAMPLE_MS`, `BUMP_STABLE_MS` | 5, 20 ms | Lab 0 |
 | `BEACON_STABLE_MS` | 10 ms | |
-| `FIND_SEARCH_MS` | time to cross the field diagonally + 20% | |
+| `KICK_SPEED`, `KICK_MS` | 80%, 150 ms | Find perimeter kick |
+| `ST_SPEED` | measure | Straight, uncorrected driving in Check / CrossThrough / Seek / CornerBackup |
+| `SWING_SPEED`, `SWING_MS`, `SWING_EXTRA_MS` | 60%, 1450 ms, 400 ms | Corner swing onto the perimeter |
+| `SWING_DELAY_IN` | 0" | Pre-swing straight run (0 = none) |
 | `FP_BACKUP_IN` | 4" | Find perimeter recovery |
 | `CREEP_MAX_IN`, `CORNER_CREEP_MAX_IN` | 8", 9" | Safety |
 | `ALIGN_MAX_DEG` | 120° | Safety |
@@ -1514,7 +1543,7 @@ IDs are for test tracking (§12).
 8. **Bumped is now a turn-around (v4).** The v3 box detour is gone: on a bump the robot backs off 3", pivots ~180° toward the field, flips its direction and keeps following. The top level logs the last tower shot by edge index and dismisses it if the robot drives over it again.
 9. **Direction is a runtime flag** (`fieldOnRight`), set by Find perimeter and flipped by each turn-around.
 10. **Attack return** stops `FRONT_OFFSET + 2"` short, then finds the tape with the front row.
-11. **Alignment = FC + MC**; BC is a separate perimeter-vs-cross check, never used right after a corner.
+11. **Alignment = FC + MC** (Follow, Attack); BC is a separate perimeter-vs-cross check, never used right after a corner.
 12. **§9 follows the team's drawings exactly.** No states were added or removed. Where a drawn arrow can't be detected the way it's labeled (e.g. "Timer" now ends on MC, "MC on stub" can't fire), the arrow is kept and the detection is explained. Inputs the drawings don't cover are listed as gaps (§8.6, §9.x) with a proposed next state that already exists.
 13. **Bumped added to the HSM** (Follow —`FRONT_BUMPED`→ Bumped —`TURNED_AROUND`→ Follow), since it had no box.
 14. **`ROBOT_HIT` renamed `ATTACK_DONE`** (hit / miss), to match the Attack FSM.
@@ -1529,6 +1558,8 @@ IDs are for test tracking (§12).
 20. **Tested in the Robot Sim** (Robot menu → design.md HSM):
     - As designed it mostly fails, because of the navigation issues in §15.
     - With the navigation fixes, the v5 robot wins 72% of 300 random fields (2 marked-hole towers + 2 opponent hits in 2:00), with 12% DQ.
+
+21. **v15 Find perimeter with cross detection (§9.1).** Replaces the v10 DriveForward / AlignToLine / CrossTurn machine. Every decision is a `TAPE_CHANGED` pattern: Check separates the cross (`FL && FC`) from a corner (`!FC`), CrossThrough/CrossArm ride the far arm to its tip, Seek/Swing put the robot on the perimeter heading clockwise, and the top level always runs Reorient. Source: the Find Perimeter FSM artifact; diagram in `FindPerimeterFSM.gv`.
 
 ## 14. Open questions
 1. **Diagram labels:** the robot now drives both ways, so relabel left/right as toward/away from the field (§8.1).
@@ -1545,7 +1576,8 @@ IDs are for test tracking (§12).
 12. **Pin map (§3.7):** confirm the proposed pins when wiring, and whether JP7 stays closed for the debug LEDs.
 13. **Shooter current:** if the solenoid draws more than 2.4 A, the DS3658 can't drive it, so use a MOSFET.
 14. **Tower mark:** the tape is on the floor under the black hole (v6). Measure how far it reaches from the tower toward the perimeter, so the downward sensor at the robot's right edge sits over it.
-15. **Navigation fixes found in the sim** (corner creep = timed 5.5", FC must turn on during pivots, keep steering in the sensor gap, ride the inner tape edge, cross check, …): fold them into §9.1/§9.2 once the team agrees.
+15. **CR sensor position (v15):** confirm CR is the bit-3 middle sensor and where it sits relative to the front row (§9.1). The v15 timings (`SWING_MS` etc.) need on-field calibration.
+16. **Navigation fixes found in the sim** (corner creep = timed 5.5", FC must turn on during pivots, keep steering in the sensor gap, ride the inner tape edge, cross check, …): fold them into §9.1/§9.2 once the team agrees.
 
 ---
 

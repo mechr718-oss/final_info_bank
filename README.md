@@ -16,17 +16,18 @@ A top-level state machine runs one sub-machine at a time. Sensor services and ev
 |---|---|---|
 | **FindPerimeter** | Finds the tape from anywhere on the field without mistaking the center cross for it | `PERIMETER_FOUND`: to FollowPerimeter if counterclockwise, to Reorient if clockwise |
 | **Reorient** | Turns around once so the shooter faces out | `TURNED_AROUND` |
-| **FollowPerimeter** | Follows the tape and turns corners. This is the main state | `MARK_SEEN` to Shoot, `BEACON_FOUND` to AttackRobot, `FRONT_BUMPED` to Bumped, `LINE_LOST` or `CROSS_SEEN` to FindPerimeter |
+| **FollowPerimeter** | Follows the tape and turns corners. This is the main state | `MARK_SEEN` to Shoot, `BEACON_FOUND` to AttackRobot, `FRONT_BUMPED` to Bumped, `LINE_LOST` to FindPerimeter |
 | **Shoot** | Fires at the tower from where it stopped and waits for the ball to clear | `BALL_SHOT` |
 | **AttackRobot** | Centers on the beacon, turns 180°, fires three shots, turns back | `ATTACK_DONE` |
 | **Bumped** | Backs off 3" and heads back the other way | `TURNED_AROUND` |
 | **Done** | Stops the robot | Nothing |
 
-**FindPerimeter.** The robot drives until the front row hits tape, creeps until the wheel axis is on it, then pivots left until the front and middle sensors line up. `FollowLine` then works out what the line is:
+**FindPerimeter.** The robot gets onto any line, then tells the center cross from the perimeter before it commits (cross detection, design.md §9.1). Every decision is a tape pattern; timers only run the kick, the swing and the steering ramp.
 
-- An arm tip sets the "next line is the perimeter" flag, and the robot drives on.
-- At a crossing, `DriveThroughCross` watches what happens next. If the line carries on, it was the center cross, so `CrossTurn` turns 180° and sets the flag. If the line ends, it was a corner.
-- `Classify` settles the ambiguous "center plus one side" reading. If the other side lights, it's a crossing. If 1.5" goes by without that, it's a corner.
+- `Check` runs when the middle sensor (CR) sees a crossing line while following. If the whole front row lights (`FL && FC`), it's the cross: `CrossThrough` drives straight over it, and `CrossArm` follows the far arm out to its tip.
+- If the center front sensor goes off instead (`!FC`), the line ended, so it's a corner. `CornerBackup` reverses until CR leaves the line, which puts the robot back at the corner's start.
+- From an arm tip, `Seek` drives until it meets a perimeter edge head-on. The right swing (`AcquireSwing`) then puts the robot on the perimeter heading clockwise, and it returns `PERIMETER_FOUND`. Reorient turns it around to counterclockwise.
+- Starting on bare floor, `Seek` finds the first line the same way; if that line was not the perimeter, the robot kicks off and runs `Check` again.
 
 **AttackRobot.** `CenterBeacon` creeps until the beacon leaves the detector's narrow slit, then backs up half that distance, which puts the beacon directly abeam. `TurnToRobot` pivots 180° so the shooter looks along the line the detector just saw. `FireAtRobot` and `MoveForRobot` alternate for three shots, and `TurnBack` restores the heading.
 
@@ -34,6 +35,7 @@ A top-level state machine runs one sub-machine at a time. Sensor services and ev
 
 The diagram lags design.md in a few places:
 
+- `FindPerimeter` is the old version (BumpRecovery, AlignToLine, CrossTurn). The current machine is in design.md §9.1 and `FindPerimeterFSM.gv`.
 - It doesn't draw the FollowPerimeter to Shoot arrow, which fires on `MARK_SEEN`.
 - `Bumped` still shows the pivoting `TurnAround`. Since v14 the robot drives backward instead.
 - `OnLine` still shows "FC + field side" as a corner. Since v9 a corner means the front row ran off the end of the edge.
