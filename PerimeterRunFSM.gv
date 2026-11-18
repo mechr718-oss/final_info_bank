@@ -54,6 +54,6 @@ digraph PerimeterRun {
     AcquireSwing -> AcquireSwing [label=<<u>TAPE [!FC]</u><br/><i>fcSeenOff = TRUE</i>>];
     AcquireSwing -> AcquireSwingExtra [label=<<u>TAPE [FC &amp;&amp; fcSeenOff &amp;&amp; half SWING_MS]</u><br/><i>Swing_FC_on</i>>];
     AcquireSwing -> AcquireSwingExtra [label=<<u>FIND_PERIM_TIMER</u><br/><i>Swing_time</i>>];
-    AcquireSwingExtra -> FoundX [label=<<u>FIND_PERIM_TIMER [onPerimeter]</u><br/><i>brake</i>>];
+    AcquireSwingExtra -> PERIMETER_FOUND [label=<<u>FIND_PERIM_TIMER [onPerimeter]</u><br/><i>brake</i>>];
     AcquireSwingExtra -> Kick [label=<<u>FIND_PERIM_TIMER [!onPerimeter]</u><br/><i>brake, backBlind = TRUE</i>>];
 }
