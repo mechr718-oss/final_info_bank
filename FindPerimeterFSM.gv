@@ -9,7 +9,8 @@ digraph FindPerimeter {
     StartCheck -> Kick [label=<<u>FC &amp;&amp; BC</u>>];
     StartCheck -> Seek [label=<<u>else (bare floor)</u>>];
     Kick -> FollowUnknown [label=<<u>FIND_PERIM_TIMER</u>>];
-    FollowUnknown -> Seek [label=<<u>TAPE [FL,FC,FR all off]</u><br/><i>Arm_tip, onPerimeter = TRUE</i>>];
+    FollowUnknown -> Seek [label=<<u>TAPE [front off &amp;&amp; wasAligned]</u><br/><i>Arm_tip, onPerimeter = TRUE</i>>];
+    FollowUnknown -> Seek [style=dotted, label=<<u>TAPE [front off &amp;&amp; !wasAligned]</u><br/><i>Lost_not_tip</i>>];
     FollowUnknown -> Check [label=<<u>TAPE [CR &amp;&amp; !backBlind]</u>>];
     FollowUnknown -> FollowUnknown [label=<<u>TAPE [else]</u><br/><i>BackBlindCheck, UpdateTarget</i>>];
     Check -> CrossThrough [label=<<u>TAPE [FL &amp;&amp; FC]</u>>];
@@ -17,8 +18,11 @@ digraph FindPerimeter {
     Check -> FollowUnknown [label=<<u>TAPE [!CR]</u><br/><i>Check_false_CR</i>>];
     CrossThrough -> CrossArm [label=<<u>TAPE [!FL &amp;&amp; !FR &amp;&amp; FC]</u><br/><i>Cross_confirmed</i>>];
     CrossThrough -> CornerBackup [label=<<u>TAPE [!FC]</u><br/><i>Corner_after_all</i>>];
-    CrossArm -> Seek [label=<<u>TAPE [FL,FC,FR all off]</u><br/><i>Arm_tip, onPerimeter = TRUE</i>>];
+    CrossArm -> Seek [label=<<u>TAPE [front off &amp;&amp; wasAligned]</u><br/><i>Arm_tip, onPerimeter = TRUE</i>>];
+    CrossArm -> Seek [style=dotted, label=<<u>TAPE [front off &amp;&amp; !wasAligned]</u><br/><i>Lost_not_tip</i>>];
     CrossArm -> CrossArm [label=<<u>TAPE [else]</u><br/><i>CrossBackBlind, UpdateTarget</i>>];
+    Seek -> Escape [label=<<u>TAPE [CR &amp;&amp; swingTries &gt;= MAX_SWINGS]</u>>];
+    Escape -> Seek [label=<<u>FIND_PERIM_TIMER</u><br/><i>straight, tape ignored</i>>];
     Seek -> AcquirePreSwing [label=<<u>TAPE [CR]</u>>];
     Seek -> AcquireSwing [label=<<u>TAPE [FL &amp;&amp; FC &amp;&amp; FR &amp;&amp; !CR]</u><br/><i>Seek_no_CR</i>>];
     CornerBackup -> CornerBackup [label=<<u>TAPE [CR]</u><br/><i>crSeen = TRUE</i>>];

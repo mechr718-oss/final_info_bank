@@ -989,7 +989,7 @@ ES_Event RunTopHSM(ES_Event ThisEvent) {
 **Rules for this machine**
 - Every decision is a `TAPE_CHANGED` pattern. Timers are only for the kick, the pre-swing delay, the swing and the steering ramp. No search timeout: place the robot where a straight run meets tape.
 - Mask bits: `FL0 FC1 FR2 CR3 BL4 BC5 BR6`. **CR** is the dedicated cross sensor, mounted ahead of the front row at about (3.7, 3.8)" so it reaches any crossing line ~1.4" before FL/FR. There is **no middle sensor**: the 7 sensors are FL, FC, FR, CR, BL, BC, BR. CR's exact position doesn't matter; "aligned" means FC and BC on and nothing else.
-- Direction is fixed: swings are right turns, so the robot always ends clockwise. The top level then runs Reorient (§8.4) to face counterclockwise.
+- Direction is fixed: swings are right turns, so the robot always ends clockwise. The game machine (§8.4) then runs Reorient to face counterclockwise; the run-mode machine (§9.8) skips it.
 
 **The three sensor facts**
 | Fact | Pattern | Used in |
@@ -1013,26 +1013,30 @@ ES_Event RunTopHSM(ES_Event ThisEvent) {
 | StartCheck (pseudo) | `onPerimeter = FALSE`; reads `Tape_GetMask()` once | entry | `FC && BC` | placed on a line | Kick |
 | | | entry | else | bare floor or part of a line | Seek |
 | Kick (log `Kick`) | `lastFrontErr = lastBackErr = targetTurn = turn = 0`; `Robot_Forward(KICK_SPEED)` (80); `FIND_PERIM_TIMER` = `KICK_MS` (150). `TAPE`: `BackBlindCheck` only | `FIND_PERIM_TIMER` | — | `UpdateTarget(Tape_GetMask())`, `RampStep()`, start `RAMP_TIMER` | FollowUnknown |
-| FollowUnknown (log `Drive` / `Drive_back_blind`) | `UpdateTarget`, `RampStep`; `RAMP_TIMER` (20 ms): `RampStep()`, restart | `TAPE` | `!FL && !FC && !FR` | log `Arm_tip`, `onPerimeter = TRUE` | Seek |
+| FollowUnknown (log `Drive` / `Drive_back_blind`) | `UpdateTarget`, `RampStep`; `RAMP_TIMER` (20 ms): `RampStep()`, restart | `TAPE` | `!FL && !FC && !FR && wasAligned` | log `Arm_tip`, `onPerimeter = TRUE`, `swingTries = 0` | Seek |
+| | | `TAPE` | `!FL && !FC && !FR && !wasAligned` | log `Lost_not_tip`: the front row just drifted off (e.g. after a swing). **Not** a tip; leave `onPerimeter` alone | Seek |
 | | | `TAPE` | `CR && !backBlind` | — | Check |
-| | | `TAPE` | else | `BackBlindCheck`, `UpdateTarget` | stay |
+| | | `TAPE` | else | `wasAligned |= (mask == ALIGNED_MASK)`, `BackBlindCheck`, `UpdateTarget` | stay |
 | Check (log `Check_CR_on`) | `targetTurn = turn = 0`; `Robot_Forward(ST_SPEED)`; ramp ticks ignored | `TAPE` | `FL && FC` | whole front row lit: the cross | CrossThrough |
 | | | `TAPE` | `!FC` | log `Corner_FC_off` | CornerBackup |
 | | | `TAPE` | `!CR` | log `Check_false_CR`, `UpdateTarget` | FollowUnknown |
 | CrossThrough (log `Cross_through`) | `targetTurn = turn = 0`; straight at `ST_SPEED`; `backBlind = TRUE`, `backCrossSeen = FALSE`; CR and ramp ticks ignored | `TAPE` | `!FC` | log `Corner_after_all` | CornerBackup |
 | | | `TAPE` | `!FL && !FR && FC` | log `Cross_confirmed`, `UpdateTarget` | CrossArm |
-| CrossArm (log `Cross_arm`) | `RAMP_TIMER`: `RampStep()`; CR ignored | `TAPE` | `!FL && !FC && !FR` | log `Arm_tip`, `onPerimeter = TRUE` | Seek |
-| | | `TAPE` | else | `CrossBackBlind` (BL or BR on sets `backCrossSeen`; then both off clears `backBlind`, log `Back_row_on`), `UpdateTarget` | stay |
-| Seek (log `Seek` / `Seek_perimeter`) | `targetTurn = turn = 0`; straight at `ST_SPEED`; no correction | `TAPE` | `CR` | line crosses in front | AcquirePreSwing |
+| CrossArm (log `Cross_arm`) | `RAMP_TIMER`: `RampStep()`; CR ignored | `TAPE` | `!FL && !FC && !FR && wasAligned` | log `Arm_tip`, `onPerimeter = TRUE`, `swingTries = 0` | Seek |
+| | | `TAPE` | `!FL && !FC && !FR && !wasAligned` | log `Lost_not_tip` | Seek |
+| | | `TAPE` | else | `CrossBackBlind` (BL or BR on sets `backCrossSeen`; then both off clears `backBlind`, log `Back_row_on`), `wasAligned |= (mask == ALIGNED_MASK)`, `UpdateTarget` | stay |
+| Seek (log `Seek` / `Seek_perimeter`) | `targetTurn = turn = 0`; straight at `ST_SPEED`; no correction | `TAPE` | `CR && swingTries >= MAX_SWINGS` | log `Swing_budget`: we keep swinging without getting anywhere | Escape |
+| | | `TAPE` | `CR` | line crosses in front | AcquirePreSwing |
 | | | `TAPE` | `FL && FC && FR && !CR` | log `Seek_no_CR` | AcquireSwing |
-| CornerBackup (log `Corner_backup`) | `onPerimeter = TRUE`; `crSeen = CR`; `Robot_Reverse(ST_SPEED)`; exit `Robot_Stop()` | `TAPE` | `CR` | `crSeen = TRUE` | stay |
+| CornerBackup (log `Corner_backup`) | `onPerimeter = TRUE`, `swingTries = 0` (a real corner is proof); `crSeen = CR`; `Robot_Reverse(ST_SPEED)`; exit `Robot_Stop()` | `TAPE` | `CR` | `crSeen = TRUE` | stay |
 | | | `TAPE` | `!CR && crSeen` | brake: CR just left the near edge | AcquirePreSwing |
 | AcquirePreSwing (log `Corner_CR_on`) | `targetTurn = turn = 0`. If `SWING_DELAY_IN` is 0 (now), go straight to AcquireSwing; else straight at `ST_SPEED`, `FIND_PERIM_TIMER` = `SWING_DELAY_IN × MS_PER_INCH_BASE` | `FIND_PERIM_TIMER` | — | — | AcquireSwing |
-| AcquireSwing (log `Swing_right`) | `swingStart = now`; `fcSeenOff = !FC`; `Robot_SwingRight(SWING_SPEED)` (60); `FIND_PERIM_TIMER` = `SWING_MS` (1450) | `TAPE` | `!FC` | `fcSeenOff = TRUE` | stay |
+| AcquireSwing (log `Swing_right`) | `swingTries++`; `swingStart = now`; `fcSeenOff = !FC`; `Robot_SwingRight(SWING_SPEED)` (60); `FIND_PERIM_TIMER` = `SWING_MS` (1450) | `TAPE` | `!FC` | `fcSeenOff = TRUE` | stay |
 | | | `TAPE` | `FC && fcSeenOff && half of SWING_MS gone` | log `Swing_FC_on` | AcquireSwingExtra |
 | | | `FIND_PERIM_TIMER` | — | log `Swing_time` | AcquireSwingExtra |
-| AcquireSwingExtra (log `Swing_extra`) | `FIND_PERIM_TIMER` = `SWING_EXTRA_MS` (400); exit `Robot_Stop()`, `backBlind = TRUE` | `FIND_PERIM_TIMER` | `onPerimeter` | log `Swing_done`; **return `PERIMETER_FOUND`** | top: Reorient |
+| AcquireSwingExtra (log `Swing_extra`) | `FIND_PERIM_TIMER` = `SWING_EXTRA_MS` (400); exit `Robot_Stop()`, `backBlind = TRUE`, `wasAligned = FALSE` | `FIND_PERIM_TIMER` | `onPerimeter` | log `Swing_done`; **return `PERIMETER_FOUND`** | top: Reorient |
 | | | `FIND_PERIM_TIMER` | `!onPerimeter` | log `Swing_done`; started on bare floor and found an unknown line | Kick |
+| Escape (log `Escape`) | `onPerimeter = FALSE`, `swingTries = 0`; straight at `ST_SPEED`, tape ignored; `FIND_PERIM_TIMER` = `ESCAPE_MS` (1200) | `FIND_PERIM_TIMER` | — | drive off whatever it was circling | Seek |
 
 All states: `BEACON_*`, `REAR_*`, `TOWER_TAPE_FOUND` → ignore. Exit of every state stops `FIND_PERIM_TIMER`.
 
@@ -1046,11 +1050,13 @@ All states: `BEACON_*`, `REAR_*`, `TOWER_TAPE_FOUND` → ignore. Exit of every s
 **Expected logs**
 | Start | S-line sequence |
 |---|---|
-| Cross arm, toward the center | `Kick → Drive → Check_CR_on → Cross_through → Cross_confirmed → Cross_arm → Back_row_on → Arm_tip → Seek_perimeter → Corner_CR_on → Swing_right → Swing_FC_on → Swing_extra → Swing_done → Reorient` |
-| Cross arm, toward the tip | `Kick → Drive → Arm_tip → Seek_perimeter → Corner_CR_on → Swing_right → … → Reorient` |
-| Perimeter, straight part | `Kick → Drive → Check_CR_on → Corner_FC_off → Corner_backup → Corner_CR_on → Swing_right → … → Reorient` |
+| Cross arm, toward the center | `Kick → Drive → Check_CR_on → Cross_through → Cross_confirmed → Cross_arm → Back_row_on → Arm_tip → Seek_perimeter → Corner_CR_on → Swing_right → Swing_FC_on → Swing_extra → Swing_done → FollowPerimeter` |
+| Cross arm, toward the tip | `Kick → Drive → Arm_tip → Seek_perimeter → Corner_CR_on → Swing_right → … → FollowPerimeter` |
+| Perimeter, straight part | `Kick → Drive → Check_CR_on → Corner_FC_off → Corner_backup → Corner_CR_on → Swing_right → … → FollowPerimeter` |
 | Bare floor | `Seek → Corner_CR_on → Swing_right → … → Kick → Drive → (a row above)` |
 | Brownout reset | `Drive_after_brownout →` (Drive row of whichever line it is on) |
+
+**Why it circled (video, v15.0):** after a swing the front row is briefly off the tape. That used to read as "arm tip", set `onPerimeter`, and the next swing returned `PERIMETER_FOUND` while still on the cross. Follow then lost the line, `LINE_LOST` restarted the search, and it repeated. Fixed by: (1) an arm tip counts only if the robot was **aligned** (`0x22`) on that line first (`wasAligned`, cleared after every swing); (2) `onPerimeter` is set only by a real corner or a real arm tip; (3) a swing budget (`MAX_SWINGS` = 3) with an Escape drive so it can never spin in place forever.
 
 **Notes**
 - On a brownout restart the sub starts in FollowUnknown (log `Drive_after_brownout`) instead of StartCheck.
@@ -1517,6 +1523,7 @@ IDs are for test tracking (§12).
 | `ST_SPEED` | measure | Straight, uncorrected driving in Check / CrossThrough / Seek / CornerBackup |
 | `SWING_SPEED`, `SWING_MS`, `SWING_EXTRA_MS` | 60%, 1450 ms, 400 ms | Corner swing onto the perimeter |
 | `SWING_DELAY_IN` | 0" | Pre-swing straight run (0 = none) |
+| `MAX_SWINGS`, `ESCAPE_MS` | 3, 1200 ms | Swing budget before an Escape drive (§9.1) |
 | `FP_BACKUP_IN` | 4" | Find perimeter recovery |
 | `CORNER_CREEP_IN` | 5.5" | Timed creep into a corner while following (§7.3) |
 | `CREEP_MAX_IN`, `CORNER_CREEP_MAX_IN` | 8", 9" | Safety |
